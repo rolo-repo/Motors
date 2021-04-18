@@ -1,14 +1,14 @@
 #ifndef BTS7960_h__
 #define BTS7960_h__
 
-#include <Constants.h>
-#include "Motor.h"
 
-#include <SerialOutput.h>
+#include "Motor.h"
+#include "SerialOutput.h"
+#include "Constants.h"
 
 class BTS7960_1PWM : public Motor
 {
-protected :
+protected:
 	void(*callback_break)();
 public:
 	/*
@@ -19,65 +19,81 @@ public:
 		L_PWM -| digital pin
 		R_PWM -| digital pin
 	*/
-	BTS7960_1PWM( PIN i_forward, PIN i_backward, PIN i_speed  /*PWM pin */, void(*i_callback_break)() = []() {}  ) : m_L_PWM(i_forward), m_R_PWM(i_backward), m_ENABLE(i_speed)
-	{
-		m_direction = Direction::STOPED;
-		m_speed = 0;
+	BTS7960_1PWM(PIN i_forward, PIN i_backward, PIN i_speed  /*PWM pin */, void(*i_callback_break)() = []() {}, uint8_t i_deadZone = 30)
+		: m_L_PWM(i_forward), m_R_PWM(i_backward), m_ENABLE(i_speed) {
 		callback_break = i_callback_break;
+		m_deadZone = i_deadZone;
 	}
 
 	void begin()
 	{
 		pinMode(m_R_PWM, OUTPUT);
 		pinMode(m_L_PWM, OUTPUT);
+#ifdef ESP32
+		m_channel = analogWriteChannel(m_ENABLE, 15000 , 8);
+#else
 		pinMode(m_ENABLE, OUTPUT);
+#endif
 		stop();
 	}
 
-	virtual void  forward( SPEED i_speed )
-	{
-		LOG_MSG( F("Speed ") << i_speed );
-
-		setDirection( Direction::FORWARD );
-		setSpeed( i_speed );
-	}
-
-	virtual void backward( SPEED i_speed )
+	virtual void  forward(SPEED i_speed)
 	{
 		LOG_MSG(F("Speed ") << i_speed);
 
-		setDirection( Direction::BACKWARD );
-		setSpeed( i_speed );
+		setDirection(Direction::FORWARD);
+		setSpeed(i_speed);
+	}
+
+	virtual void backward(SPEED i_speed)
+	{
+		LOG_MSG(F("Speed ") << i_speed);
+
+		setDirection(Direction::BACKWARD);
+		setSpeed(i_speed);
 	}
 
 	virtual void stop()
 	{
-		LOG_MSG(F("Speed ") << m_speed);
+		digitalWrite(m_L_PWM, LOW);
+		digitalWrite(m_R_PWM, LOW);
 
-		setDirection( Direction::STOPED ) ;
-		setSpeed(0);
+		Motor::setDirection(Direction::STOPED);
+		Motor::setSpeed(0);
+
+		LOG_MSG(F("Speed ") << (int)getSpeed() << F(" Direction ") << (short)getDirection());
 		callback_break();
 	}
 
-protected:
-	 virtual void setSpeed ( SPEED i_speed ){
-		
-		 if ( i_speed < m_speed )
-			 callback_break();
+	void adjust ( SPEED i_speed ) {
 
-		m_speed = constrain( i_speed, 0, 255 );
-		
-		if ( m_speed > m_deadZone ) {
-			analogWrite( m_ENABLE, m_speed);
-		}
-		else {
-			digitalWrite(m_L_PWM, LOW);
-			digitalWrite(m_R_PWM, LOW);
-			m_direction =  Direction::STOPED;
+		if ( i_speed > m_deadZone ) {
+			analogWrite(m_ENABLE, i_speed );
 		}
 	}
 
-	 virtual void setDirection ( Direction i_direction ){
+protected:
+	virtual void setSpeed( SPEED i_speed ) {
+
+		SPEED current_speed = getSpeed();
+
+		if ( i_speed < current_speed )
+			callback_break();
+
+		Motor::setSpeed( i_speed );
+
+		if ( getSpeed() > m_deadZone ) {
+			analogWrite(m_ENABLE, getSpeed() );
+		}
+		else {
+			stop();
+		}
+	}
+
+	virtual void setDirection(Direction i_direction) {
+
+		Motor::setDirection(i_direction);
+
 		switch (i_direction) {
 		case Direction::FORWARD:
 			digitalWrite(m_L_PWM, HIGH);
@@ -92,133 +108,73 @@ protected:
 			digitalWrite(m_R_PWM, LOW);
 			break;
 		}
-
-		m_direction = i_direction;
 	}
 
-protected:
-	
+private:
 	PIN m_R_PWM;  // backward
 	PIN m_ENABLE; //speed
 	PIN m_L_PWM;  // forward
 
-	int16_t m_deadZone = 30;
+#ifdef ESP32
+	int16_t m_channel;
+#endif
+
+protected:
+	int16_t m_deadZone;
 };
 
-class BTS7960_2PWM : public Motor
-{
-	/*
-		R_EN -|
-			  |- 5V pin
-		L_EN -|
-
-		L_PWM -| PWM pin
-		R_PWM -| PWM pin
-	*/
-public:
-
-	BTS7960_2PWM(PIN i_forward /*PWM*/ ,PIN i_backward /*PWM*/ ):m_L_PWM(i_forward), m_R_PWM(i_backward){}
-
-	void begin()
-	{
-		pinMode(m_R_PWM, OUTPUT);
-		pinMode(m_L_PWM, OUTPUT);
-		stop();
-	}
-	virtual void  forward(SPEED i_speed)
-	{
-		LOG_MSG(F("Motor -- move forward speed ") << i_speed);
-
-		if (i_speed < m_deadZone)
-			return stop();
-
-		analogWrite(m_L_PWM, constrain(i_speed, 0, 255));
-		analogWrite(m_R_PWM, 0);
-
-		m_direction = Direction::FORWARD;
-	}
-
-	virtual void backward( SPEED i_speed )
-	{
-		LOG_MSG(F("Motor -- move backward speed ") << i_speed);
-
-		if (i_speed < m_deadZone)
-			return stop();
-
-		analogWrite( m_R_PWM, constrain( i_speed, 0, 255 ) );
-		analogWrite( m_L_PWM, 0 );
-
-		m_direction = Direction::BACKWARD;
-	}
-
-	virtual void stop()
-	{
-		analogWrite( m_L_PWM, 0 );
-		analogWrite( m_R_PWM, 0 );
-		m_direction = Direction::STOPED;
-	}
-
-private :
-	PIN m_R_PWM;  // backward
-	PIN m_L_PWM;  // forward
-
-	int16_t m_deadZone = 30;
-};
-
-class BTS7960_1PWM_Smooth : public BTS7960_1PWM
+template < class Base >
+class BTS7960 : public Base
 {
 private:
-	SPEED m_targetSpeed;
-	Direction m_targetDirection;
+	Motor::SPEED m_targetSpeed;
+	Motor::Direction m_targetDirection;
 
 	uint64_t tm = 0;
 
-public :
-	BTS7960_1PWM_Smooth( PIN i_forward, PIN i_backward, PIN i_speed  /*PWM pin */, void(*i_callback_break)() , int32_t i_deadZone = 30 ) : BTS7960_1PWM ( i_forward, i_backward, i_speed, i_callback_break ) 
-	{
+public:
+	BTS7960(PIN i_forward, PIN i_backward, PIN i_speed  /*PWM pin */, void(*i_callback_break)(), uint8_t i_deadZone = 30) : Base(i_forward, i_backward, i_speed, i_callback_break) {
 		m_targetSpeed = 0;
 		tm = millis();
-		m_deadZone = i_deadZone;
+		Base::m_deadZone = i_deadZone;
 		m_targetDirection = Motor::Direction::STOPED;
 	}
 
+	void run() {
+		static uint8_t dt = 10;
 
-	void run()
-	{
-		uint16_t dt = 10 ;
-		
-		if ( tm + dt < millis() ) {	
-			if ( getDirection() != m_targetDirection ){
-				BTS7960_1PWM::setSpeed( getSpeed() - ( getSpeed() / 10 ) );
-			} else if ( abs( m_targetSpeed - getSpeed() ) > 10 ) {
-				BTS7960_1PWM::setSpeed( getSpeed() + ( m_targetSpeed - getSpeed() ) / 10 );
-			} else  {
-				BTS7960_1PWM::setSpeed( m_targetSpeed );
+		if (tm + dt < millis()) {
+			if (Base::getDirection() != m_targetDirection) {
+				Base::setSpeed(constrain(Base::getSpeed() - (Base::getSpeed() / dt), 0, Base::getSpeed()));
+			}
+			else if (abs(m_targetSpeed - Base::getSpeed()) > 10) {
+				Base::setSpeed(Base::getSpeed() + (m_targetSpeed - Base::getSpeed()) / dt);
+			}
+			else {
+				Base::setSpeed(m_targetSpeed);
 			}
 
-			if ( BTS7960_1PWM::getDirection() == Direction::STOPED 
-				&& m_targetSpeed > m_deadZone ) {
-				BTS7960_1PWM::setDirection( m_targetDirection );
+			if (Base::getDirection() == Motor::Direction::STOPED
+				&& m_targetSpeed > Base::m_deadZone) {
+				Base::setDirection(m_targetDirection);
 			}
 
 			tm = millis();
-
-		}	
+		}
 	}
 
 protected:
-    virtual void setSpeed( SPEED i_speed ) {
+	virtual void setSpeed(Motor::SPEED i_speed) {
 		LOG_MSG(F("Speed ") << i_speed);
-		m_targetSpeed = constrain ( i_speed , 0 ,255 );
+		m_targetSpeed = constrain(i_speed, 0, 255);
 
-		if ( m_targetSpeed < m_deadZone )
-			BTS7960_1PWM::setDirection( Direction::STOPED );
+		if (m_targetSpeed < Base::m_deadZone)
+			Base::setDirection(Motor::Direction::STOPED);
 	}
 
-	virtual void setDirection( Direction i_direction ) {	
+	virtual void setDirection(Motor::Direction i_direction) {
 		m_targetDirection = i_direction;
 	}
-
 };
 
 
